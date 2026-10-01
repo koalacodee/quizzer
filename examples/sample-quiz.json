@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "title": "Calculus Warm-up — Derivatives",
+  "description": "A quick check after **Lecture 2**. Covers the power rule, the chain rule and a bit of notation.\n\nGood luck! 🎯",
+  "timeLimitMinutes": null,
+  "shuffleQuestions": false,
+  "shuffleChoices": false,
+  "showAnswers": true,
+  "published": true,
+  "questions": [
+    {
+      "type": "single",
+      "text": "What is $\\dfrac{d}{dx}\\left(x^3\\right)$?",
+      "points": 1,
+      "explanation": "By the power rule $\\frac{d}{dx}x^n = n x^{n-1}$, so we get $3x^2$.",
+      "choices": [
+        { "text": "$x^2$", "correct": false },
+        { "text": "$3x^2$", "correct": true },
+        { "text": "$3x^3$", "correct": false },
+        { "text": "$\\frac{x^4}{4}$", "correct": false }
+      ]
+    },
+    {
+      "type": "single",
+      "text": "Using the chain rule, compute\n\n$$\n\\frac{d}{dx}\\, \\sin\\!\\left(x^2\\right)\n$$",
+      "points": 2,
+      "explanation": "Outer derivative $\\cos(u)$ times inner derivative $2x$.",
+      "choices": [
+        { "text": "$\\cos(x^2)$", "correct": false },
+        { "text": "$2x\\cos(x^2)$", "correct": true },
+        { "text": "$-2x\\cos(x^2)$", "correct": false },
+        { "text": "$2x\\sin(x^2)$", "correct": false }
+      ]
+    },
+    {
+      "type": "multiple",
+      "text": "Which of the following functions are **differentiable everywhere** on $\\mathbb{R}$?",
+      "points": 2,
+      "explanation": "$|x|$ has a corner at $0$, and $\\sqrt{x}$ is not even defined for $x<0$.",
+      "choices": [
+        { "text": "$e^x$", "correct": true },
+        { "text": "$|x|$", "correct": false },
+        { "text": "$x^5 - 2x$", "correct": true },
+        { "text": "$\\sqrt{x}$", "correct": false }
+      ]
+    },
+    {
+      "question": "What does this Python snippet print?\n\n```python\nf = lambda x: x ** 2\nh = 1e-6\nprint(round((f(3 + h) - f(3)) / h))\n```",
+      "grade": 1,
+      "choices": ["3", "6", "9", "0"],
+      "answer": 1,
+      "explanation": "It's a finite-difference approximation of $f'(3) = 2 \\cdot 3 = 6$."
+    }
+  ]
+}
