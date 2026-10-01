@@ -48,6 +48,22 @@ Open http://localhost:3000 for quizzes and http://localhost:3000/admin to manage
 | `npm run db:studio` | Browse the database with Drizzle Studio |
 | `npm run db:seed` | Import `examples/sample-quiz.json` |
 
+## Deploying to Vercel + Neon
+
+1. **Import the repo in Vercel** (Add New → Project → pick `koalacodee/quizzer`). Framework preset: Next.js. Leave the build settings alone — `vercel.json` already runs migrations before each build.
+2. **Add Neon** from the project's **Storage** tab (Create Database → Neon) and connect it to all environments. This sets `DATABASE_URL` (pooled) and `DATABASE_URL_UNPOOLED` (direct) for you.
+   *Using an existing Neon project instead?* Add `DATABASE_URL` = the **pooled** connection string and `DATABASE_URL_UNPOOLED` = the direct one, under Settings → Environment Variables.
+3. **Add the remaining environment variables:**
+   - `ADMIN_PASSWORD` — the admin password
+   - `SESSION_SECRET` — a long random string, e.g. from `openssl rand -base64 32`
+4. **Deploy** (or redeploy if the first build ran before the database was connected).
+5. *Optional* — load the sample quiz into the production database from your machine:
+   ```bash
+   DATABASE_URL="<neon direct connection string>" npm run db:seed
+   ```
+
+Schema changes later: edit `src/db/schema.ts`, run `npm run db:generate`, commit the new file in `drizzle/`, and push — the next deploy applies it.
+
 ## JSON format
 
 ```jsonc

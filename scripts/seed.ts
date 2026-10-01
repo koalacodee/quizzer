@@ -6,8 +6,9 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "../src/db/schema";
 import { parseQuizImport } from "../src/lib/quiz-format";
+import { databaseUrl } from "../src/db/url";
 
-const client = postgres(process.env.DATABASE_URL!, { max: 1 });
+const client = postgres(databaseUrl(process.env.DATABASE_URL_UNPOOLED || process.env.DATABASE_URL), { max: 1 });
 const db = drizzle(client, { schema });
 
 async function main() {
