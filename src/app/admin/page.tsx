@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { logout } from "./actions";
 import { QuizRowActions } from "./QuizRowActions";
+import { quizStatus } from "@/lib/availability";
 import { formatPoints } from "@/lib/grading";
 import { listQuizzesForAdmin } from "@/lib/quizzes";
 import { requireAdmin } from "@/lib/auth";
@@ -12,6 +13,7 @@ export const metadata: Metadata = { title: "Manage quizzes" };
 export default async function AdminPage() {
   await requireAdmin();
   const quizzes = await listQuizzesForAdmin();
+  const now = new Date();
 
   return (
     <div className="space-y-6">
@@ -76,6 +78,11 @@ export default async function AdminPage() {
                     >
                       {q.published ? "Published" : "Draft"}
                     </span>
+                    {quizStatus(q, now) !== "open" && (
+                      <span className="ml-1 rounded-full border border-border px-2.5 py-0.5 text-xs text-muted">
+                        {quizStatus(q, now) === "upcoming" ? "Scheduled" : "Closed"}
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <QuizRowActions id={q.id} title={q.title} published={q.published} />

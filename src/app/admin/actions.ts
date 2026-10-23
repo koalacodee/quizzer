@@ -1,20 +1,39 @@
 "use server";
 
 import { eq } from "drizzle-orm";
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
 import { attempts, quizzes } from "@/db/schema";
 import { requireAdmin } from "@/lib/auth";
 import { formatIssues, parseQuizImport, quizSchema } from "@/lib/quiz-format";
-import { createQuiz, getQuizFull, isUuid, toEditor, toExport, updateQuiz } from "@/lib/quizzes";
+import {
+  QUIZZES_TAG,
+  createQuiz,
+  getQuizFull,
+  isUuid,
+  regradeAttempts as regradeAll,
+  toEditor,
+  toExport,
+  updateQuiz,
+} from "@/lib/quizzes";
 import type { QuizInput } from "@/lib/quiz-format";
+import { clientIp, rateLimit } from "@/lib/rate-limit";
 import { SESSION_COOKIE, SESSION_TTL_SECONDS, createSessionToken, passwordMatches } from "@/lib/session";
 
+/** Quiz data changed: refresh the cached public list and every rendered page. */
+function invalidate() {
+  revalidateTag(QUIZZES_TAG, { expire: 0 });
+  revalidatePath("/", "layout");
+}
+
 export async function login(_prev: { error?: string } | undefined, formData: FormData) {
+  if (!(await rateLimit(`login:${await clientIp()}`, 10, 15 * 60))) {
+    return { error: "Too many attempts — try again in a few minutes" };
+  }
   const password = String(formData.get("password") ?? "");
-  if (!passwordMatches(password)) return { error: "Wrong password" };
+  if (!(await passwordMatches(password))) return { error: "Wrong password" };
   (await cookies()).set(SESSION_COOKIE, await createSessionToken(), {
     httpOnly: true,
     sameSite: "lax",
@@ -40,12 +59,11 @@ export async function saveQuiz(id: string | null, input: unknown): Promise<SaveR
 
   let quizId = id;
   if (quizId) {
-    if (!isUuid(quizId)) return { errors: ["Quiz not found"] };
-    await updateQuiz(quizId, parsed.data);
+    if (!isUuid(quizId) || !(await updateQuiz(quizId, parsed.data))) return { errors: ["Quiz not found"] };
   } else {
     quizId = await createQuiz(parsed.data);
   }
-  revalidatePath("/", "layout");
+  invalidate();
   const saved = await getQuizFull(quizId);
   if (!saved) return { errors: ["Quiz not found"] };
   return { ok: true, id: quizId, quiz: toEditor(saved) };
@@ -54,13 +72,13 @@ export async function saveQuiz(id: string | null, input: unknown): Promise<SaveR
 export async function deleteQuiz(id: string) {
   await requireAdmin();
   if (isUuid(id)) await db.delete(quizzes).where(eq(quizzes.id, id));
-  revalidatePath("/", "layout");
+  invalidate();
 }
 
 export async function setPublished(id: string, published: boolean) {
   await requireAdmin();
-  if (isUuid(id)) await db.update(quizzes).set({ published }).where(eq(quizzes.id, id));
-  revalidatePath("/", "layout");
+  if (isUuid(id)) await db.update(quizzes).set({ published, updatedAt: new Date() }).where(eq(quizzes.id, id));
+  invalidate();
 }
 
 export async function duplicateQuiz(id: string) {
@@ -69,7 +87,7 @@ export async function duplicateQuiz(id: string) {
   if (!quiz) return;
   const copy = toExport(quiz);
   await createQuiz({ ...copy, title: `${copy.title} (copy)`, published: false });
-  revalidatePath("/", "layout");
+  invalidate();
 }
 
 export async function deleteAttempt(id: string) {
@@ -78,12 +96,19 @@ export async function deleteAttempt(id: string) {
   revalidatePath("/admin", "layout");
 }
 
+export async function regradeAttempts(quizId: string): Promise<{ count: number }> {
+  await requireAdmin();
+  const count = isUuid(quizId) ? await regradeAll(quizId) : 0;
+  revalidatePath("/", "layout");
+  return { count };
+}
+
 export async function importQuizzes(json: string): Promise<{ errors: string[] } | { ok: true; ids: string[] }> {
   await requireAdmin();
   const res = parseQuizImport(json);
   if (!res.ok) return { errors: res.errors };
   const ids: string[] = [];
   for (const quiz of res.quizzes) ids.push(await createQuiz(quiz));
-  revalidatePath("/", "layout");
+  invalidate();
   return { ok: true, ids };
 }
