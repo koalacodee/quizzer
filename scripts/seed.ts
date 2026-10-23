@@ -2,6 +2,7 @@
 import "dotenv/config";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "../src/db/schema";
@@ -18,7 +19,11 @@ async function main() {
 
   for (const quiz of res.quizzes) {
     const quizId = await createQuiz(db, quiz);
-    console.log(`Seeded "${quiz.title}" → /quiz/${quizId}`);
+    const [{ shortCode }] = await db
+      .select({ shortCode: schema.quizzes.shortCode })
+      .from(schema.quizzes)
+      .where(eq(schema.quizzes.id, quizId));
+    console.log(`Seeded "${quiz.title}" → /q/${shortCode}`);
   }
   await client.end();
 }

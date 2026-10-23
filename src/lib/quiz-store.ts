@@ -10,10 +10,32 @@ type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
 const excluded = (column: string) => sql.raw(`excluded.${column}`);
 
-const CODE_ALPHABET = "23456789abcdefghjkmnpqrstuvwxyz";
-export function newShortCode(length = 6) {
-  const bytes = crypto.getRandomValues(new Uint8Array(length));
-  return Array.from(bytes, (b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join("");
+/** Public quiz identifier used in share links: 10 digits, never starting with 0. */
+export const SHARE_CODE_LENGTH = 10;
+
+export function newShortCode() {
+  const digits: number[] = [];
+  while (digits.length < SHARE_CODE_LENGTH) {
+    for (const b of crypto.getRandomValues(new Uint8Array(16))) {
+      // Rejection sampling keeps every digit equally likely.
+      if (b >= 250) continue;
+      const d = b % 10;
+      if (digits.length === 0 && d === 0) continue;
+      if (digits.length < SHARE_CODE_LENGTH) digits.push(d);
+    }
+  }
+  return digits.join("");
+}
+
+/** Accepts codes typed with spaces or dashes ("482 910 3756"); returns the bare digits or null. */
+export function normalizeShareCode(input: string) {
+  const digits = input.replace(/[\s-]/g, "");
+  return /^[1-9]\d{9}$/.test(digits) ? digits : null;
+}
+
+/** "4829103756" → "482 910 3756", easier to read aloud or copy from a slide. */
+export function formatShareCode(code: string) {
+  return code.replace(/^(\d{3})(\d{3})(\d{4})$/, "$1 $2 $3");
 }
 
 export function quizValues(input: QuizInput) {

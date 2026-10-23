@@ -50,7 +50,7 @@ export async function logout() {
   redirect("/");
 }
 
-export type SaveResult = { errors: string[] } | { ok: true; id: string; quiz: QuizInput };
+export type SaveResult = { errors: string[] } | { ok: true; id: string; shortCode: string; quiz: QuizInput };
 
 export async function saveQuiz(id: string | null, input: unknown): Promise<SaveResult> {
   await requireAdmin();
@@ -66,7 +66,7 @@ export async function saveQuiz(id: string | null, input: unknown): Promise<SaveR
   invalidate();
   const saved = await getQuizFull(quizId);
   if (!saved) return { errors: ["Quiz not found"] };
-  return { ok: true, id: quizId, quiz: toEditor(saved) };
+  return { ok: true, id: quizId, shortCode: saved.shortCode, quiz: toEditor(saved) };
 }
 
 export async function deleteQuiz(id: string) {

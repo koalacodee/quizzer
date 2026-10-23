@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import QRCode from "qrcode";
 import { requireAdmin } from "@/lib/auth";
+import { formatShareCode } from "@/lib/quiz-store";
 import { getQuizFull } from "@/lib/quizzes";
 import { CopyButton } from "./CopyButton";
 
@@ -24,17 +25,20 @@ export default async function SharePage(props: PageProps<"/admin/quizzes/[id]/sh
 
   const base = await origin();
   const shortUrl = `${base}/q/${quiz.shortCode}`;
-  const fullUrl = `${base}/quiz/${quiz.id}`;
+  const code = formatShareCode(quiz.shortCode);
   // qrcode emits a self-contained SVG string from our own URL, so inlining it is safe.
   const svg = await QRCode.toString(shortUrl, { type: "svg", margin: 1, errorCorrectionLevel: "M" });
   const { present } = await props.searchParams;
 
   if (present !== undefined) {
     return (
-      <div className="fixed inset-0 z-30 flex flex-col items-center justify-center gap-6 bg-white p-6 text-center text-stone-900">
+      <div className="fixed inset-0 z-30 flex flex-col items-center justify-center gap-4 overflow-y-auto bg-white p-6 text-center text-stone-900">
         <h1 className="text-3xl font-semibold sm:text-5xl">{quiz.title}</h1>
-        <div className="w-[min(70vh,80vw)] [&_svg]:h-auto [&_svg]:w-full" dangerouslySetInnerHTML={{ __html: svg }} />
+        <div className="w-[min(55vh,80vw)] [&_svg]:h-auto [&_svg]:w-full" dangerouslySetInnerHTML={{ __html: svg }} />
         <p className="font-mono text-2xl sm:text-4xl">{shortUrl.replace(/^https?:\/\//, "")}</p>
+        <p className="text-lg text-stone-500 sm:text-2xl">
+          or enter code <span className="font-mono font-semibold text-stone-900">{code}</span> on {base.replace(/^https?:\/\//, "")}
+        </p>
         <Link href={`/admin/quizzes/${quiz.id}/share`} className="text-sm text-stone-500 underline">
           Exit presentation
         </Link>
@@ -59,18 +63,19 @@ export default async function SharePage(props: PageProps<"/admin/quizzes/[id]/sh
         </div>
         <div className="card space-y-5 p-6">
           <div>
-            <span className="label">Short link</span>
+            <span className="label">Link</span>
             <div className="flex gap-2">
-              <input readOnly value={shortUrl} className="input font-mono" aria-label="Short link" />
+              <input readOnly value={shortUrl} className="input font-mono" aria-label="Link" />
               <CopyButton text={shortUrl} />
             </div>
           </div>
           <div>
-            <span className="label">Full link</span>
-            <div className="flex gap-2">
-              <input readOnly value={fullUrl} className="input font-mono text-xs" aria-label="Full link" />
-              <CopyButton text={fullUrl} />
+            <span className="label">Quiz code</span>
+            <div className="flex items-center gap-2">
+              <span className="input font-mono text-lg tracking-wider">{code}</span>
+              <CopyButton text={quiz.shortCode} />
             </div>
+            <p className="mt-1 text-xs text-muted">Students can type this on the home page instead of the link.</p>
           </div>
           <Link href={`/admin/quizzes/${quiz.id}/share?present`} className="btn-primary inline-flex">
             Present full screen

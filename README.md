@@ -9,7 +9,7 @@ A small, minimalist quiz platform for sharing quick quizzes after each lecture o
 
 ## Features
 
-**Taking quizzes** (`/`, `/quiz/:id`)
+**Taking quizzes** (`/`, `/q/:code`)
 - One question at a time, clean card layout, progress bar and question navigator
 - Question types: single answer, multiple answers ("select all that apply"), true/false, and numeric (with a ± tolerance; `2,5` and `2.5` both work)
 - Keyboard shortcuts: `1`–`9` pick an answer, `←`/`→` navigate, `F` flags a question
@@ -31,7 +31,8 @@ A small, minimalist quiz platform for sharing quick quizzes after each lecture o
 - Publish/unpublish, preview drafts, duplicate, copy share link
 - Attempts list per quiz (name, student ID, score, date, late) with links to each result, CSV export, and "re-grade past attempts" after fixing an answer key
 - Analytics per question: % correct, average points, how often each choice was picked (highlighting the most popular wrong answer), and the spread of numeric answers
-- Share page with a QR code and a short link (`/q/abc123`), plus a full-screen mode for lecture slides
+- Every quiz has a public 10-digit code used in its URL (`/q/4829103756`) — the database id is never shared. Students can open the link, scan the QR code, or type the code into the "Have a quiz code?" box on the home page (spaces and dashes are fine). Old `/quiz/:id` links redirect
+- Share page with the link, the code, a QR code, and a full-screen mode for lecture slides
 
 ## Getting started
 

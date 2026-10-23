@@ -85,7 +85,7 @@ export default async function AdminPage() {
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    <QuizRowActions id={q.id} title={q.title} published={q.published} />
+                    <QuizRowActions id={q.id} shortCode={q.shortCode} title={q.title} published={q.published} />
                   </td>
                 </tr>
               ))}

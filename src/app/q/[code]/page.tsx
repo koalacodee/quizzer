@@ -1,27 +1,32 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { Markdown } from "@/components/Markdown";
 import { QuizTaker, type TakerQuiz } from "@/components/QuizTaker";
 import { isAdmin } from "@/lib/auth";
 import { quizStatus } from "@/lib/availability";
-import { attemptsRemaining, getQuizFull } from "@/lib/quizzes";
+import { normalizeShareCode } from "@/lib/quiz-store";
+import { attemptsRemaining, getQuizFullByCode } from "@/lib/quizzes";
 
 export const dynamic = "force-dynamic";
 
-async function load(id: string) {
-  const quiz = await getQuizFull(id);
+async function load(code: string) {
+  const quiz = await getQuizFullByCode(code);
   if (!quiz || (!quiz.published && !(await isAdmin()))) return null;
   return quiz;
 }
 
-export async function generateMetadata(props: PageProps<"/quiz/[id]">): Promise<Metadata> {
-  const quiz = await load((await props.params).id);
+export async function generateMetadata(props: PageProps<"/q/[code]">): Promise<Metadata> {
+  const quiz = await load((await props.params).code);
   return { title: quiz?.title ?? "Quiz not found" };
 }
 
-export default async function QuizPage(props: PageProps<"/quiz/[id]">) {
-  const quiz = await load((await props.params).id);
+export default async function QuizPage(props: PageProps<"/q/[code]">) {
+  const { code } = await props.params;
+  // Tidy codes typed with spaces or dashes ("482-910-3756") into the canonical URL.
+  const normalized = normalizeShareCode(decodeURIComponent(code));
+  if (normalized && normalized !== code) redirect(`/q/${normalized}`);
+  const quiz = await load(code);
   if (!quiz) notFound();
 
   // With student IDs the limit is per ID, which isn't known until the form is filled in.
