@@ -6,6 +6,7 @@ import { attempts, choices, questions, quizzes, type SnapshotQuestion } from "@/
 import { buildSnapshot } from "./grading";
 import type { ExportedQuiz, QuizInput } from "./quiz-format";
 import * as store from "./quiz-store";
+import { normalizeShareCode } from "./quiz-store";
 
 /** Cache tag for the public quiz list; invalidate after any quiz mutation. */
 export const QUIZZES_TAG = "quizzes";
@@ -13,22 +14,32 @@ export const QUIZZES_TAG = "quizzes";
 export type FullQuiz = NonNullable<Awaited<ReturnType<typeof getQuizFull>>>;
 type Attempt = typeof attempts.$inferSelect;
 
+const withQuestions = {
+  questions: {
+    orderBy: asc(questions.position),
+    with: { choices: { orderBy: asc(choices.position) } },
+  },
+} as const;
+
 export async function getQuizFull(id: string) {
   if (!isUuid(id)) return undefined;
-  return db.query.quizzes.findFirst({
-    where: eq(quizzes.id, id),
-    with: {
-      questions: {
-        orderBy: asc(questions.position),
-        with: { choices: { orderBy: asc(choices.position) } },
-      },
-    },
-  });
+  return db.query.quizzes.findFirst({ where: eq(quizzes.id, id), with: withQuestions });
 }
 
+/** Looks a quiz up by its public 10-digit share code (spaces and dashes allowed). */
+export async function getQuizFullByCode(code: string) {
+  const normalized = normalizeShareCode(code);
+  if (!normalized) return undefined;
+  return db.query.quizzes.findFirst({ where: eq(quizzes.shortCode, normalized), with: withQuestions });
+}
+
+// Drizzle renders columns in select fields without their table name, so a bare ${quizzes.id}
+// inside these subqueries would bind to the inner table's "id". Qualify the outer column explicitly.
+const outerQuizId = sql`${quizzes}.${sql.identifier(quizzes.id.name)}`;
+
 const statsColumns = {
-  questionCount: sql<number>`(select count(*) from ${questions} where ${questions.quizId} = ${quizzes.id})`.mapWith(Number),
-  totalPoints: sql<number>`(select coalesce(sum(${questions.points}), 0) from ${questions} where ${questions.quizId} = ${quizzes.id})`.mapWith(Number),
+  questionCount: sql<number>`(select count(*) from ${questions} where ${questions.quizId} = ${outerQuizId})`.mapWith(Number),
+  totalPoints: sql<number>`(select coalesce(sum(${questions.points}), 0) from ${questions} where ${questions.quizId} = ${outerQuizId})`.mapWith(Number),
 };
 
 /** Attempts that count: submitted, and not an admin preview. */
@@ -39,6 +50,7 @@ const cachedPublishedQuizzes = unstable_cache(
     db
       .select({
         id: quizzes.id,
+        shortCode: quizzes.shortCode,
         title: quizzes.title,
         description: quizzes.description,
         timeLimitMinutes: quizzes.timeLimitMinutes,
@@ -70,14 +82,15 @@ export async function listQuizzesForAdmin() {
   return db
     .select({
       id: quizzes.id,
+      shortCode: quizzes.shortCode,
       title: quizzes.title,
       published: quizzes.published,
       opensAt: quizzes.opensAt,
       closesAt: quizzes.closesAt,
       updatedAt: quizzes.updatedAt,
       ...statsColumns,
-      attemptCount: sql<number>`(select count(*) from ${attempts} where ${attempts.quizId} = ${quizzes.id} and ${counted})`.mapWith(Number),
-      avgPercent: sql<number | null>`(select avg(case when ${attempts.maxScore} > 0 then ${attempts.score} / ${attempts.maxScore} * 100 end) from ${attempts} where ${attempts.quizId} = ${quizzes.id} and ${counted})`.mapWith((v) => (v == null ? null : Number(v))),
+      attemptCount: sql<number>`(select count(*) from ${attempts} where ${attempts.quizId} = ${outerQuizId} and ${counted})`.mapWith(Number),
+      avgPercent: sql<number | null>`(select avg(case when ${attempts.maxScore} > 0 then ${attempts.score} / ${attempts.maxScore} * 100 end) from ${attempts} where ${attempts.quizId} = ${outerQuizId} and ${counted})`.mapWith((v) => (v == null ? null : Number(v))),
     })
     .from(quizzes)
     .orderBy(desc(quizzes.updatedAt));

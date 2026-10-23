@@ -1,6 +1,7 @@
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import {
   boolean,
+  check,
   doublePrecision,
   index,
   integer,
@@ -17,34 +18,38 @@ export const answerReveal = pgEnum("answer_reveal", ["immediately", "after_close
 export const scoringMode = pgEnum("scoring_mode", ["all_or_nothing", "partial"]);
 export const attemptStatus = pgEnum("attempt_status", ["in_progress", "submitted"]);
 
-export const quizzes = pgTable("quizzes", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  /** Short code for `/q/:code` share links. */
-  shortCode: text("short_code").notNull().unique(),
-  title: text("title").notNull(),
-  description: text("description").notNull().default(""),
-  /** Optional time limit in minutes; null = untimed. */
-  timeLimitMinutes: integer("time_limit_minutes"),
-  shuffleQuestions: boolean("shuffle_questions").notNull().default(false),
-  shuffleChoices: boolean("shuffle_choices").notNull().default(false),
-  /** When correct answers and explanations appear on the results page. */
-  answerReveal: answerReveal("answer_reveal").notNull().default("immediately"),
-  published: boolean("published").notNull().default(false),
-  /** Optional availability window. */
-  opensAt: timestamp("opens_at", { withTimezone: true }),
-  closesAt: timestamp("closes_at", { withTimezone: true }),
-  /** Attempts per participant; null = unlimited. */
-  maxAttempts: integer("max_attempts"),
-  requireName: boolean("require_name").notNull().default(false),
-  collectStudentId: boolean("collect_student_id").notNull().default(false),
-  /** Draw this many random questions per attempt; null = all. */
-  questionPoolSize: integer("question_pool_size"),
-  scoring: scoringMode("scoring").notNull().default("all_or_nothing"),
-  /** Fraction of a question's points deducted for a wrong answer (0–1). */
-  negativeMarking: doublePrecision("negative_marking").notNull().default(0),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const quizzes = pgTable(
+  "quizzes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** Public 10-digit identifier used in quiz URLs (`/q/:code`), so the primary key is never shared. */
+    shortCode: text("short_code").notNull().unique(),
+    title: text("title").notNull(),
+    description: text("description").notNull().default(""),
+    /** Optional time limit in minutes; null = untimed. */
+    timeLimitMinutes: integer("time_limit_minutes"),
+    shuffleQuestions: boolean("shuffle_questions").notNull().default(false),
+    shuffleChoices: boolean("shuffle_choices").notNull().default(false),
+    /** When correct answers and explanations appear on the results page. */
+    answerReveal: answerReveal("answer_reveal").notNull().default("immediately"),
+    published: boolean("published").notNull().default(false),
+    /** Optional availability window. */
+    opensAt: timestamp("opens_at", { withTimezone: true }),
+    closesAt: timestamp("closes_at", { withTimezone: true }),
+    /** Attempts per participant; null = unlimited. */
+    maxAttempts: integer("max_attempts"),
+    requireName: boolean("require_name").notNull().default(false),
+    collectStudentId: boolean("collect_student_id").notNull().default(false),
+    /** Draw this many random questions per attempt; null = all. */
+    questionPoolSize: integer("question_pool_size"),
+    scoring: scoringMode("scoring").notNull().default("all_or_nothing"),
+    /** Fraction of a question's points deducted for a wrong answer (0–1). */
+    negativeMarking: doublePrecision("negative_marking").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [check("quizzes_short_code_format", sql`${t.shortCode} ~ '^[1-9][0-9]{9}$'`)],
+);
 
 export const questions = pgTable(
   "questions",

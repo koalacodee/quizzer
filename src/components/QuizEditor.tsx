@@ -223,7 +223,7 @@ export function QuizEditor({
       setDraft(toDraft(res.quiz));
       setDirty(false);
       setSavedAt(new Date());
-      if (thenPreview) window.open(`/quiz/${res.id}`, "_blank");
+      if (thenPreview) window.open(`/q/${res.shortCode}`, "_blank");
       if (!quizId) router.replace(`/admin/quizzes/${res.id}`);
     });
   };

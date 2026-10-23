@@ -4,12 +4,22 @@ import Link from "next/link";
 import { useState, useTransition } from "react";
 import { deleteQuiz, duplicateQuiz, setPublished } from "./actions";
 
-export function QuizRowActions({ id, title, published }: { id: string; title: string; published: boolean }) {
+export function QuizRowActions({
+  id,
+  shortCode,
+  title,
+  published,
+}: {
+  id: string;
+  shortCode: string;
+  title: string;
+  published: boolean;
+}) {
   const [pending, start] = useTransition();
   const [copied, setCopied] = useState(false);
 
   const copyLink = async () => {
-    await navigator.clipboard.writeText(`${window.location.origin}/quiz/${id}`);
+    await navigator.clipboard.writeText(`${window.location.origin}/q/${shortCode}`);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
@@ -21,7 +31,7 @@ export function QuizRowActions({ id, title, published }: { id: string; title: st
       <button className={item} disabled={pending} onClick={() => start(() => setPublished(id, !published))}>
         {published ? "Unpublish" : "Publish"}
       </button>
-      <Link className={item} href={`/quiz/${id}`} target="_blank">Preview</Link>
+      <Link className={item} href={`/q/${shortCode}`} target="_blank">Preview</Link>
       <button className={item} onClick={copyLink}>{copied ? "Copied!" : "Copy link"}</button>
       <Link className={item} href={`/admin/quizzes/${id}/share`}>Share</Link>
       <Link className={item} href={`/admin/quizzes/${id}`}>Edit</Link>

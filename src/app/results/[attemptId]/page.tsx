@@ -89,7 +89,7 @@ export default async function ResultPage(props: PageProps<"/results/[attemptId]"
         </div>
         <div className="mt-8 flex gap-3">
           {canRetake && (
-            <Link href={`/quiz/${quiz.id}`} className="btn-ghost">
+            <Link href={`/q/${quiz.shortCode}`} className="btn-ghost">
               Retake{remaining != null && ` (${remaining} left)`}
             </Link>
           )}
