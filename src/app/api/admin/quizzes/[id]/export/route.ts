@@ -1,6 +1,6 @@
 import { isAdmin } from "@/lib/auth";
 import { EXPORT_VERSION } from "@/lib/quiz-format";
-import { getQuizFull, toExport } from "@/lib/quizzes";
+import { getQuizFull, slugify, toExport } from "@/lib/quizzes";
 
 export async function GET(_req: Request, ctx: RouteContext<"/api/admin/quizzes/[id]/export">) {
   if (!(await isAdmin())) return Response.json({ error: "Unauthorized" }, { status: 401 });
@@ -14,8 +14,4 @@ export async function GET(_req: Request, ctx: RouteContext<"/api/admin/quizzes/[
       "Content-Disposition": `attachment; filename="${slugify(quiz.title)}.quiz.json"`,
     },
   });
-}
-
-function slugify(s: string) {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "quiz";
 }

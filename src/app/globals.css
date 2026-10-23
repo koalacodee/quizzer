@@ -1,4 +1,7 @@
 @import "tailwindcss";
+/* Code highlighting that follows the light/dark color scheme. */
+@import "highlight.js/styles/github.css";
+@import "highlight.js/styles/github-dark.css" (prefers-color-scheme: dark);
 
 :root {
   --background: #fafaf9;

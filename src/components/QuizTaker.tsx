@@ -2,8 +2,13 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
-import { submitAttempt } from "@/app/quiz/[id]/actions";
+import { resumeAttempt, startAttempt, submitAttempt, type ActiveAttempt } from "@/app/quiz/[id]/actions";
+import type { QuizStatus } from "@/lib/availability";
 import { formatPoints } from "@/lib/grading";
+import { orderChoices } from "@/lib/layout";
+import { LocalTime } from "./LocalTime";
+
+type QuestionType = "single" | "multiple" | "true_false" | "numeric";
 
 export type TakerQuiz = {
   id: string;
@@ -11,12 +16,18 @@ export type TakerQuiz = {
   description: React.ReactNode;
   published: boolean;
   timeLimitMinutes: number | null;
-  shuffleQuestions: boolean;
-  shuffleChoices: boolean;
   totalPoints: number;
+  status: QuizStatus;
+  opensAt: string | null;
+  closesAt: string | null;
+  requireName: boolean;
+  collectStudentId: boolean;
+  questionPoolSize: number | null;
+  /** null = unlimited */
+  attemptsRemaining: number | null;
   questions: {
     id: string;
-    type: "single" | "multiple";
+    type: QuestionType;
     points: number;
     text: React.ReactNode;
     choices: { id: string; text: React.ReactNode }[];
@@ -24,26 +35,18 @@ export type TakerQuiz = {
 };
 
 type Progress = {
-  startedAt: number;
-  name: string;
   current: number;
   answers: Record<string, string[]>;
   flagged: string[];
-  questionOrder: string[];
-  choiceOrder: Record<string, string[]>;
 };
 
-const NAME_KEY = "quizzer:name";
-const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+type Saved = Progress & { attemptId: string };
 
-function shuffle<T>(arr: T[]) {
-  const a = [...arr];
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
+const NAME_KEY = "quizzer:name";
+const STUDENT_ID_KEY = "quizzer:student-id";
+const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+/** Delays between automatic submit retries when the timer runs out. */
+const RETRY_DELAYS = [2_000, 5_000, 10_000];
 
 function storage() {
   try {
@@ -53,101 +56,141 @@ function storage() {
   }
 }
 
+const isAnswered = (answers: Progress["answers"], id: string) => !!answers[id]?.some((v) => v.trim() !== "");
+
 export function QuizTaker({ quiz }: { quiz: TakerQuiz }) {
   const router = useRouter();
-  const storageKey = `quizzer:progress:${quiz.id}`;
-  const [progress, setProgress] = useState<Progress | null>(null);
+  const storageKey = `quizzer:attempt:${quiz.id}`;
+  const [session, setSession] = useState<ActiveAttempt | null>(null);
+  const [progress, setProgress] = useState<Progress>({ current: 0, answers: {}, flagged: [] });
   const [name, setName] = useState("");
+  const [studentId, setStudentId] = useState("");
   const [reviewing, setReviewing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [startError, setStartError] = useState<string | null>(null);
+  const [starting, startTransition] = useTransition();
+  const [submitting, setSubmitting] = useState(false);
   const [hydrated, setHydrated] = useState(false);
 
-  // Restore an in-progress attempt (survives refreshes) and the remembered name.
+  // Latest answers for submits fired from timers.
+  const progressRef = useRef(progress);
+  useEffect(() => {
+    progressRef.current = progress;
+  }, [progress]);
+
+  // Restore an in-progress attempt (the server is the source of truth for order and deadline).
   useEffect(() => {
     const s = storage();
     // eslint-disable-next-line react-hooks/set-state-in-effect -- reading browser-only storage after mount
     setName(s?.getItem(NAME_KEY) ?? "");
-    const raw = s?.getItem(storageKey);
-    if (raw) {
-      try {
-        const saved = JSON.parse(raw) as Progress;
-        const ids = new Set(quiz.questions.map((q) => q.id));
-        // Drop saved progress if the quiz changed since.
-        if (
-          saved.questionOrder.length === ids.size &&
-          saved.questionOrder.every((id) => ids.has(id))
-        ) {
-          setProgress(saved);
+    setStudentId(s?.getItem(STUDENT_ID_KEY) ?? "");
+    let saved: Saved | null = null;
+    try {
+      saved = JSON.parse(s?.getItem(storageKey) ?? "null");
+    } catch {
+      s?.removeItem(storageKey);
+    }
+    if (!saved?.attemptId) {
+      setHydrated(true);
+      return;
+    }
+    let cancelled = false;
+    resumeAttempt(saved.attemptId)
+      .then((active) => {
+        if (cancelled) return;
+        if (active?.status === "in_progress") {
+          setSession(active);
+          setProgress({ current: saved.current ?? 0, answers: saved.answers ?? {}, flagged: saved.flagged ?? [] });
         } else {
           s?.removeItem(storageKey);
         }
-      } catch {
-        s?.removeItem(storageKey);
-      }
-    }
-    setHydrated(true);
-  }, [quiz.questions, storageKey]);
+      })
+      .catch(() => {})
+      .finally(() => !cancelled && setHydrated(true));
+    return () => {
+      cancelled = true;
+    };
+  }, [storageKey]);
 
   useEffect(() => {
-    if (progress) storage()?.setItem(storageKey, JSON.stringify(progress));
-  }, [progress, storageKey]);
+    if (session) storage()?.setItem(storageKey, JSON.stringify({ ...progress, attemptId: session.attemptId }));
+  }, [progress, session, storageKey]);
 
   const start = () => {
-    storage()?.setItem(NAME_KEY, name.trim());
-    const qIds = quiz.questions.map((q) => q.id);
-    setProgress({
-      startedAt: Date.now(),
-      name: name.trim(),
-      current: 0,
-      answers: {},
-      flagged: [],
-      questionOrder: quiz.shuffleQuestions ? shuffle(qIds) : qIds,
-      choiceOrder: Object.fromEntries(
-        quiz.questions.map((q) => {
-          const cIds = q.choices.map((c) => c.id);
-          return [q.id, quiz.shuffleChoices ? shuffle(cIds) : cIds];
-        }),
-      ),
+    const s = storage();
+    s?.setItem(NAME_KEY, name.trim());
+    s?.setItem(STUDENT_ID_KEY, studentId.trim());
+    setStartError(null);
+    startTransition(async () => {
+      try {
+        const res = await startAttempt({ quizId: quiz.id, participantName: name, participantId: studentId });
+        if ("error" in res) {
+          setStartError(res.error);
+          return;
+        }
+        setProgress({ current: 0, answers: {}, flagged: [] });
+        setSession(res);
+      } catch {
+        setStartError("Couldn't reach the server — check your connection and try again.");
+      }
     });
   };
 
-  const submit = useCallback(() => {
-    if (!progress) return;
-    setError(null);
-    startTransition(async () => {
-      const res = await submitAttempt({
-        quizId: quiz.id,
-        participantName: progress.name,
-        answers: progress.answers,
-        startedAt: progress.startedAt,
-      });
-      if ("error" in res) {
-        setError(res.error);
-        return;
+  const submit = useCallback(
+    async (auto = false) => {
+      if (!session) return;
+      setError(null);
+      setSubmitting(true);
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const res = await submitAttempt({ attemptId: session.attemptId, answers: progressRef.current.answers });
+          if ("error" in res) {
+            setError(res.error);
+            break;
+          }
+          storage()?.removeItem(storageKey);
+          router.push(`/results/${res.attemptId}`);
+          return;
+        } catch {
+          if (!auto || attempt >= RETRY_DELAYS.length) {
+            setError("Couldn't reach the server — your answers are saved on this device. Check your connection and submit again.");
+            break;
+          }
+          await new Promise((r) => setTimeout(r, RETRY_DELAYS[attempt]));
+        }
       }
-      storage()?.removeItem(storageKey);
-      router.push(`/results/${res.attemptId}`);
-    });
-  }, [progress, quiz.id, router, storageKey]);
+      setSubmitting(false);
+    },
+    [session, router, storageKey],
+  );
 
   if (!hydrated) return <div className="card mx-auto h-64 max-w-2xl animate-pulse" />;
 
-  if (!progress) {
+  if (!session) {
     return (
-      <Intro quiz={quiz} name={name} setName={setName} onStart={start} />
+      <Intro
+        quiz={quiz}
+        name={name}
+        setName={setName}
+        studentId={studentId}
+        setStudentId={setStudentId}
+        onStart={start}
+        starting={starting}
+        error={startError}
+      />
     );
   }
 
   return (
     <Runner
       quiz={quiz}
+      session={session}
       progress={progress}
       setProgress={setProgress}
       reviewing={reviewing}
       setReviewing={setReviewing}
       onSubmit={submit}
-      submitting={pending}
+      submitting={submitting}
       error={error}
     />
   );
@@ -157,13 +200,26 @@ function Intro({
   quiz,
   name,
   setName,
+  studentId,
+  setStudentId,
   onStart,
+  starting,
+  error,
 }: {
   quiz: TakerQuiz;
   name: string;
   setName: (s: string) => void;
+  studentId: string;
+  setStudentId: (s: string) => void;
   onStart: () => void;
+  starting: boolean;
+  error: string | null;
 }) {
+  const pooled = quiz.questionPoolSize != null && quiz.questionPoolSize < quiz.questions.length;
+  const exhausted = quiz.attemptsRemaining === 0;
+  // Admins can preview closed or upcoming quizzes; students get a notice instead of a start button.
+  const blocked = quiz.published && (quiz.status !== "open" || exhausted);
+
   return (
     <div className="mx-auto max-w-2xl">
       {!quiz.published && (
@@ -176,36 +232,83 @@ function Intro({
         {quiz.description && <div className="mt-4 text-muted">{quiz.description}</div>}
 
         <dl className="mt-6 grid grid-cols-3 gap-3 text-center">
-          <Stat label="Questions" value={String(quiz.questions.length)} />
-          <Stat label="Points" value={formatPoints(quiz.totalPoints)} />
+          <Stat label="Questions" value={String(pooled ? quiz.questionPoolSize : quiz.questions.length)} />
+          <Stat label="Points" value={pooled ? "Varies" : formatPoints(quiz.totalPoints)} />
           <Stat label="Time" value={quiz.timeLimitMinutes ? `${quiz.timeLimitMinutes} min` : "Untimed"} />
         </dl>
 
-        <form
-          className="mt-6 space-y-4"
-          onSubmit={(e) => {
-            e.preventDefault();
-            onStart();
-          }}
-        >
-          <div>
-            <label htmlFor="name" className="label">Your name (optional)</label>
-            <input
-              id="name"
-              className="input"
-              value={name}
-              maxLength={100}
-              placeholder="So you can find your result later"
-              onChange={(e) => setName(e.target.value)}
-            />
-          </div>
-          <button type="submit" className="btn-primary w-full py-3 text-base">
-            Start quiz
-          </button>
-          <p className="text-center text-xs text-muted">
-            Tip: use <Kbd>1</Kbd>–<Kbd>9</Kbd> to pick answers and <Kbd>←</Kbd> <Kbd>→</Kbd> to move between questions.
+        {(quiz.opensAt || quiz.closesAt || quiz.attemptsRemaining != null) && (
+          <ul className="mt-4 space-y-1 text-sm text-muted">
+            {quiz.opensAt && quiz.status === "upcoming" && (
+              <li>Opens <LocalTime date={quiz.opensAt} /></li>
+            )}
+            {quiz.closesAt && (
+              <li>
+                {quiz.status === "closed" ? "Closed" : "Closes"} <LocalTime date={quiz.closesAt} />
+              </li>
+            )}
+            {quiz.attemptsRemaining != null && (
+              <li>
+                {quiz.attemptsRemaining} attempt{quiz.attemptsRemaining === 1 ? "" : "s"} remaining
+              </li>
+            )}
+          </ul>
+        )}
+
+        {blocked ? (
+          <p className="mt-6 rounded-xl border border-border bg-background px-4 py-3 text-center text-sm text-muted">
+            {quiz.status === "upcoming"
+              ? "This quiz hasn't opened yet — come back later."
+              : quiz.status === "closed"
+                ? "This quiz is closed."
+                : "You've used all your attempts for this quiz."}
           </p>
-        </form>
+        ) : (
+          <form
+            className="mt-6 space-y-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              onStart();
+            }}
+          >
+            <div>
+              <label htmlFor="name" className="label">
+                Your name {quiz.requireName ? "" : "(optional)"}
+              </label>
+              <input
+                id="name"
+                className="input"
+                value={name}
+                maxLength={100}
+                required={quiz.requireName}
+                placeholder="So you can find your result later"
+                onChange={(e) => setName(e.target.value)}
+              />
+            </div>
+            {quiz.collectStudentId && (
+              <div>
+                <label htmlFor="student-id" className="label">Student ID</label>
+                <input
+                  id="student-id"
+                  className="input"
+                  value={studentId}
+                  maxLength={100}
+                  required
+                  onChange={(e) => setStudentId(e.target.value)}
+                />
+              </div>
+            )}
+            {error && (
+              <p className="rounded-xl border border-danger/40 bg-danger-soft px-4 py-2 text-sm text-danger">{error}</p>
+            )}
+            <button type="submit" className="btn-primary w-full py-3 text-base" disabled={starting}>
+              {starting ? "Starting…" : "Start quiz"}
+            </button>
+            <p className="text-center text-xs text-muted">
+              Tip: use <Kbd>1</Kbd>–<Kbd>9</Kbd> to pick answers and <Kbd>←</Kbd> <Kbd>→</Kbd> to move between questions.
+            </p>
+          </form>
+        )}
       </div>
     </div>
   );
@@ -213,6 +316,7 @@ function Intro({
 
 function Runner({
   quiz,
+  session,
   progress,
   setProgress,
   reviewing,
@@ -222,67 +326,75 @@ function Runner({
   error,
 }: {
   quiz: TakerQuiz;
+  session: ActiveAttempt;
   progress: Progress;
-  setProgress: React.Dispatch<React.SetStateAction<Progress | null>>;
+  setProgress: React.Dispatch<React.SetStateAction<Progress>>;
   reviewing: boolean;
   setReviewing: (v: boolean) => void;
-  onSubmit: () => void;
+  onSubmit: (auto?: boolean) => void;
   submitting: boolean;
   error: string | null;
 }) {
   const byId = useMemo(() => new Map(quiz.questions.map((q) => [q.id, q])), [quiz.questions]);
-  const ordered = progress.questionOrder.map((id) => byId.get(id)!).filter(Boolean);
+  const ordered = useMemo(
+    () => session.layout.questionIds.map((id) => byId.get(id)).filter((q) => !!q),
+    [session.layout.questionIds, byId],
+  );
   const total = ordered.length;
   const current = Math.min(progress.current, total - 1);
   const question = ordered[current];
-  const answeredCount = ordered.filter((q) => progress.answers[q.id]?.length).length;
-
-  const update = useCallback(
-    (fn: (p: Progress) => Progress) => setProgress((p) => (p ? fn(p) : p)),
-    [setProgress],
+  const choices = useMemo(
+    () => (question ? orderChoices(session.layout.choiceOrder[question.id], question.choices) : []),
+    [question, session.layout.choiceOrder],
   );
+  const answeredCount = ordered.filter((q) => isAnswered(progress.answers, q.id)).length;
 
   const goTo = useCallback(
     (i: number) => {
       setReviewing(false);
-      update((p) => ({ ...p, current: Math.max(0, Math.min(total - 1, i)) }));
+      setProgress((p) => ({ ...p, current: Math.max(0, Math.min(total - 1, i)) }));
     },
-    [total, update, setReviewing],
+    [total, setProgress, setReviewing],
   );
 
   const toggleChoice = useCallback(
-    (qId: string, cId: string, type: "single" | "multiple") =>
-      update((p) => {
+    (qId: string, cId: string, type: QuestionType) =>
+      setProgress((p) => {
         const prev = p.answers[qId] ?? [];
         const next =
-          type === "single"
-            ? prev[0] === cId ? [] : [cId]
-            : prev.includes(cId) ? prev.filter((x) => x !== cId) : [...prev, cId];
+          type === "multiple"
+            ? prev.includes(cId) ? prev.filter((x) => x !== cId) : [...prev, cId]
+            : prev[0] === cId ? [] : [cId];
         return { ...p, answers: { ...p.answers, [qId]: next } };
       }),
-    [update],
+    [setProgress],
+  );
+
+  const setNumeric = useCallback(
+    (qId: string, value: string) =>
+      setProgress((p) => ({ ...p, answers: { ...p.answers, [qId]: value === "" ? [] : [value] } })),
+    [setProgress],
   );
 
   const toggleFlag = useCallback(
     (qId: string) =>
-      update((p) => ({
+      setProgress((p) => ({
         ...p,
         flagged: p.flagged.includes(qId) ? p.flagged.filter((x) => x !== qId) : [...p.flagged, qId],
       })),
-    [update],
+    [setProgress],
   );
 
   // Keyboard shortcuts.
   useEffect(() => {
-    if (reviewing) return;
+    if (reviewing || !question) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const target = e.target as HTMLElement;
       if (target.closest("input, textarea, [contenteditable]")) return;
-      const order = progress.choiceOrder[question.id] ?? question.choices.map((c) => c.id);
       if (/^[1-9]$/.test(e.key)) {
-        const cId = order[Number(e.key) - 1];
-        if (cId) toggleChoice(question.id, cId, question.type);
+        const choice = choices[Number(e.key) - 1];
+        if (choice && question.type !== "numeric") toggleChoice(question.id, choice.id, question.type);
       } else if (e.key === "ArrowRight") {
         if (current === total - 1) setReviewing(true);
         else goTo(current + 1);
@@ -294,22 +406,30 @@ function Runner({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [question, current, total, reviewing, progress.choiceOrder, toggleChoice, toggleFlag, goTo, setReviewing]);
+  }, [question, choices, current, total, reviewing, toggleChoice, toggleFlag, goTo, setReviewing]);
+
+  if (!question) {
+    return (
+      <div className="card mx-auto max-w-2xl p-8 text-center text-muted">
+        This quiz changed since you started.{" "}
+        <button type="button" className="text-accent underline" onClick={() => onSubmit()}>
+          Submit what you have
+        </button>
+        .
+      </div>
+    );
+  }
 
   const isLast = current === total - 1;
   const flagged = new Set(progress.flagged);
+  const single = question.type !== "multiple";
 
   return (
     <div className="mx-auto max-w-3xl">
       {/* Top bar */}
       <div className="mb-4 flex items-center justify-between gap-4">
         <h1 className="truncate text-sm font-medium text-muted">{quiz.title}</h1>
-        {quiz.timeLimitMinutes && (
-          <Countdown
-            deadline={progress.startedAt + quiz.timeLimitMinutes * 60_000}
-            onExpire={onSubmit}
-          />
-        )}
+        {session.deadline && <Countdown deadline={session.deadline} onExpire={() => onSubmit(true)} />}
       </div>
       <div className="mb-6 h-1.5 overflow-hidden rounded-full bg-border">
         <div
@@ -318,12 +438,21 @@ function Runner({
         />
       </div>
 
+      {error && !reviewing && (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-danger/40 bg-danger-soft px-4 py-2 text-sm text-danger">
+          <span>{error}</span>
+          <button type="button" className="btn-primary py-1.5" onClick={() => onSubmit()} disabled={submitting}>
+            {submitting ? "Submitting…" : "Submit again"}
+          </button>
+        </div>
+      )}
+
       {reviewing ? (
         <Review
           ordered={ordered}
           progress={progress}
           onJump={goTo}
-          onSubmit={onSubmit}
+          onSubmit={() => onSubmit()}
           submitting={submitting}
           error={error}
         />
@@ -359,37 +488,57 @@ function Runner({
               <p className="mt-3 text-sm text-muted">Select all that apply.</p>
             )}
 
-            <ul className="mt-6 space-y-3" role={question.type === "single" ? "radiogroup" : "group"}>
-              {(progress.choiceOrder[question.id] ?? question.choices.map((c) => c.id)).map((cId, i) => {
-                const choice = question.choices.find((c) => c.id === cId);
-                if (!choice) return null;
-                const selected = progress.answers[question.id]?.includes(cId) ?? false;
-                return (
-                  <li key={cId}>
-                    <button
-                      type="button"
-                      role={question.type === "single" ? "radio" : "checkbox"}
-                      aria-checked={selected}
-                      onClick={() => toggleChoice(question.id, cId, question.type)}
-                      className={`flex w-full items-start gap-3 rounded-xl border px-4 py-3 text-left transition ${
-                        selected
-                          ? "border-accent bg-accent-soft ring-1 ring-accent"
-                          : "border-border hover:border-accent/50 hover:bg-background"
-                      }`}
-                    >
-                      <span
-                        className={`mt-0.5 grid h-6 w-6 shrink-0 place-items-center text-xs font-semibold transition ${
-                          question.type === "single" ? "rounded-full" : "rounded-md"
-                        } ${selected ? "bg-accent text-white dark:text-stone-950" : "border border-border text-muted"}`}
+            {question.type === "numeric" ? (
+              <div className="mt-6">
+                <label htmlFor={`answer-${question.id}`} className="label">Your answer</label>
+                <input
+                  id={`answer-${question.id}`}
+                  className="input max-w-xs font-mono text-base"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  placeholder="Enter a number"
+                  value={progress.answers[question.id]?.[0] ?? ""}
+                  onChange={(e) => setNumeric(question.id, e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      if (isLast) setReviewing(true);
+                      else goTo(current + 1);
+                    }
+                  }}
+                />
+              </div>
+            ) : (
+              <ul className="mt-6 space-y-3" role={single ? "radiogroup" : "group"}>
+                {choices.map((choice, i) => {
+                  const selected = progress.answers[question.id]?.includes(choice.id) ?? false;
+                  return (
+                    <li key={choice.id}>
+                      <button
+                        type="button"
+                        role={single ? "radio" : "checkbox"}
+                        aria-checked={selected}
+                        onClick={() => toggleChoice(question.id, choice.id, question.type)}
+                        className={`flex w-full items-start gap-3 rounded-xl border px-4 py-3 text-left transition ${
+                          selected
+                            ? "border-accent bg-accent-soft ring-1 ring-accent"
+                            : "border-border hover:border-accent/50 hover:bg-background"
+                        }`}
                       >
-                        {LETTERS[i]}
-                      </span>
-                      <span className="min-w-0 flex-1">{choice.text}</span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
+                        <span
+                          className={`mt-0.5 grid h-6 w-6 shrink-0 place-items-center text-xs font-semibold transition ${
+                            single ? "rounded-full" : "rounded-md"
+                          } ${selected ? "bg-accent text-white dark:text-stone-950" : "border border-border text-muted"}`}
+                        >
+                          {LETTERS[i]}
+                        </span>
+                        <span className="min-w-0 flex-1">{choice.text}</span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
           </article>
 
           <div className="mt-6 flex items-center justify-between gap-3">
@@ -413,7 +562,7 @@ function Runner({
       <nav className="mt-8" aria-label="Questions">
         <div className="flex flex-wrap justify-center gap-1.5">
           {ordered.map((q, i) => {
-            const answered = !!progress.answers[q.id]?.length;
+            const answered = isAnswered(progress.answers, q.id);
             const active = !reviewing && i === current;
             return (
               <button
@@ -470,7 +619,7 @@ function Review({
   submitting: boolean;
   error: string | null;
 }) {
-  const unanswered = ordered.map((q, i) => ({ q, i })).filter(({ q }) => !progress.answers[q.id]?.length);
+  const unanswered = ordered.map((q, i) => ({ q, i })).filter(({ q }) => !isAnswered(progress.answers, q.id));
   const flagged = ordered.map((q, i) => ({ q, i })).filter(({ q }) => progress.flagged.includes(q.id));
 
   return (
@@ -549,7 +698,8 @@ function Countdown({ deadline, onExpire }: { deadline: number; onExpire: () => v
       onExpire();
     }
   }, [left, onExpire]);
-  const m = Math.floor(left / 60_000);
+  const h = Math.floor(left / 3_600_000);
+  const m = Math.floor((left % 3_600_000) / 60_000);
   const s = Math.floor((left % 60_000) / 1000);
   const low = left < 60_000;
   return (
@@ -559,7 +709,7 @@ function Countdown({ deadline, onExpire }: { deadline: number; onExpire: () => v
       }`}
       aria-live={low ? "polite" : "off"}
     >
-      ⏱ {m}:{String(s).padStart(2, "0")}
+      ⏱ {h ? `${h}:${String(m).padStart(2, "0")}` : m}:{String(s).padStart(2, "0")}
     </span>
   );
 }
