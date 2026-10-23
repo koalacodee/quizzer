@@ -1,11 +1,11 @@
 {
-  "version": 1,
+  "version": 2,
   "title": "Calculus Warm-up — Derivatives",
   "description": "A quick check after **Lecture 2**. Covers the power rule, the chain rule and a bit of notation.\n\nGood luck! 🎯",
   "timeLimitMinutes": null,
   "shuffleQuestions": false,
   "shuffleChoices": false,
-  "showAnswers": true,
+  "answerReveal": "immediately",
   "published": true,
   "questions": [
     {
@@ -50,6 +50,21 @@
       "choices": ["3", "6", "9", "0"],
       "answer": 1,
       "explanation": "It's a finite-difference approximation of $f'(3) = 2 \\cdot 3 = 6$."
+    },
+    {
+      "type": "numeric",
+      "text": "Let $f(x) = x^2 + 3x$. What is the slope of the tangent line at $x = 1.5$?",
+      "points": 2,
+      "answer": 6,
+      "tolerance": 0.01,
+      "explanation": "$f'(x) = 2x + 3$, so $f'(1.5) = 3 + 3 = 6$."
+    },
+    {
+      "type": "true_false",
+      "text": "If $f$ is differentiable at $a$, then $f$ is continuous at $a$.",
+      "points": 1,
+      "answer": true,
+      "explanation": "Differentiability implies continuity — but not the other way around (think $|x|$)."
     }
   ]
 }
