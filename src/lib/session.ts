@@ -4,9 +4,13 @@ export const SESSION_COOKIE = "quizzer_admin";
 export const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
 
 function secret() {
-  const s = process.env.SESSION_SECRET || process.env.ADMIN_PASSWORD;
-  if (!s) throw new Error("SESSION_SECRET (or ADMIN_PASSWORD) must be set");
-  return s;
+  const s = process.env.SESSION_SECRET;
+  if (s) return s;
+  if (process.env.NODE_ENV === "production") throw new Error("SESSION_SECRET must be set in production");
+  // Development convenience only.
+  const fallback = process.env.ADMIN_PASSWORD;
+  if (!fallback) throw new Error("SESSION_SECRET (or ADMIN_PASSWORD in development) must be set");
+  return fallback;
 }
 
 async function hmac(data: string) {
@@ -29,20 +33,26 @@ function safeEqual(a: string, b: string) {
   return diff === 0;
 }
 
+// Signing the current password means changing ADMIN_PASSWORD logs every session out.
+const payload = (exp: number) => `admin:${exp}:${process.env.ADMIN_PASSWORD ?? ""}`;
+
 export async function createSessionToken() {
   const exp = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
-  return `${exp}.${await hmac(`admin:${exp}`)}`;
+  return `${exp}.${await hmac(payload(exp))}`;
 }
 
 export async function verifySessionToken(token: string | undefined) {
-  if (!token) return false;
+  if (!token || !process.env.ADMIN_PASSWORD) return false;
   const [expStr, sig] = token.split(".");
   const exp = Number(expStr);
   if (!exp || !sig || exp < Date.now() / 1000) return false;
-  return safeEqual(sig, await hmac(`admin:${exp}`));
+  return safeEqual(sig, await hmac(payload(exp)));
 }
 
-export function passwordMatches(input: string) {
+/** Compares HMACs rather than raw strings so timing doesn't leak the password length. */
+export async function passwordMatches(input: string) {
   const expected = process.env.ADMIN_PASSWORD;
-  return !!expected && safeEqual(input, expected);
+  if (!expected) return false;
+  const [a, b] = await Promise.all([hmac(`pw:${input}`), hmac(`pw:${expected}`)]);
+  return safeEqual(a, b);
 }
